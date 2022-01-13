@@ -79,7 +79,7 @@ def process_log_data(spark: SparkSession, songs_table: DataFrame) -> (DataFrame,
     """
     log_data_staging = populate_log_staging_table(spark)
     users_table = populate_user_table(log_data_staging)
-    log_data_staging, time_table = populate_time_table(log_data_staging, spark)
+    time_table = populate_time_table(spark, log_data_staging)
     songplays_table = populate_songplays_table(log_data_staging, songs_table, time_table)
     return users_table, time_table, songplays_table
 
