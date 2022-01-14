@@ -44,6 +44,9 @@ An **optional** mode parameter may be passed to `etl.py` which allows the script
 from local storage or HDFS and changes the s3 write mode from overwrite to ignore.
 This was added to facilitate local testing. 
 
+Without any parameter, the default behavior is to read from s3 and
+overwrite the parquet files in overwrite mode.
+
 ```commandline
 spark-submit etl.py <mode>
 ```
