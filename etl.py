@@ -207,7 +207,9 @@ def populate_log_staging_table(spark: SparkSession, mode: str) -> DataFrame:
                              Fld("ts", Lng()),
                              Fld("userAgent", Str()),
                              Fld("userId", Str())])
-    log_data_staging = get_json_from_s3(spark, "udacity-dend/log_data/", log_schema, mode).filter("page = 'NextSong'")
+    log_data_staging = get_json_from_s3(spark, "udacity-dend/log_data/2018/11/*.json", log_schema, mode)\
+        .filter("page = 'NextSong'")
+
     print(f"{log_data_staging.count()} songplay log records loaded")
     return log_data_staging
 
