@@ -14,6 +14,7 @@ Functions for extracting records from json files in s3 and populating cleaned an
 config = configparser.ConfigParser()
 config.read("dl.cfg")
 
+
 def create_spark_session() -> SparkSession:
     """
     Create SparkSession object with Hadoop-aws jar loaded
@@ -52,8 +53,7 @@ def process_song_data(spark: SparkSession, mode: str) -> (DataFrame, DataFrame):
     :return: Tuple containing two final DataFrame tables
     """
     songs_data_staging = get_json_from_s3(
-        # TODO: Update to full path (this worked  "udacity-dend/song-data/A/*/*",)
-        spark, "udacity-dend/song_data/",
+        spark, "udacity-dend/song_data/*/*/*/*.json",
         StructType([Fld("artist_id", Str()), Fld("artist_latitude", Dbl()), Fld("artist_longitude", Dbl()),
                     Fld("artist_location", Str()), Fld("artist_name", Str()), Fld("song_id", Str()),
                     Fld("title", Str()), Fld("duration", Dbl()), Fld("year", Int())]),
@@ -78,7 +78,7 @@ def process_song_data(spark: SparkSession, mode: str) -> (DataFrame, DataFrame):
     print(f"{artists_table.count()} artist records populated")
 
     # write artists table to parquet files
-    artists_table.write.mode(config.get(mode, "WRITE_MODE"))\
+    artists_table.write.mode(config.get(mode, "WRITE_MODE")) \
         .parquet("s3a://wallerstein-udacity/data_lake/artists_table")
 
     return songs_table, artists_table
@@ -221,6 +221,10 @@ def main() -> None:
     mode = "DEFAULT" if len(sys.argv) == 1 else sys.argv[1]
 
     spark = create_spark_session()
+    # Speed up s3 writes
+    spark.sparkContext._jsc.hadoopConfiguration()\
+        .set("mapreduce.fileoutputcommitter.algorithm.version", "2")
+
     # set Spark logging level
     spark.sparkContext.setLogLevel(config.get(mode, "LOG_LEVEL"))
 
