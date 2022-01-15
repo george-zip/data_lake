@@ -30,35 +30,33 @@ def create_spark_session() -> SparkSession:
         .getOrCreate()
 
 
-def get_json_from_s3(spark: SparkSession, data_path: str, schema: StructType, mode: str) -> DataFrame:
+def get_json_from_s3(spark: SparkSession, data_path: str, schema: StructType) -> DataFrame:
     """
     Load json file(s) from s3_path, validate using schema and return DataFrame
     :param spark: SparkSession
     :param data_path: Valid path NOT including URI or prefix (s3a:// for example)
     :param schema: Schema describing field names and types
-    :param mode: Configuration mode
     :return: DataFrame containing records in json file
     """
-    path = config.get(mode, "READ_PREFIX") + data_path
-    print(f"Retrieving data files from {path}")
+    print(f"Retrieving data files from {data_path}")
     return spark.read.schema(schema) \
-        .option("recursiveFileLookup", "true").json(path)
+        .option("recursiveFileLookup", "true").json(data_path)
 
 
-def process_song_data(spark: SparkSession, mode: str) -> (DataFrame, DataFrame):
+def process_song_data(spark: SparkSession, input_path: str, output_path: str, mode: str) -> (DataFrame, DataFrame):
     """
     Load json song data from S3 into staging table and move to final tables
     :param spark: Created Spark session
+    :param input_path: Base path for input json files
+    :param output_path: Base path for parquet files
     :param mode: Configuration mode
     :return: Tuple containing two final DataFrame tables
     """
     songs_data_staging = get_json_from_s3(
-        spark, "udacity-dend/song_data/*/*/*/*.json",
+        spark, input_path + "/song_data/*/*/*/*.json",
         StructType([Fld("artist_id", Str()), Fld("artist_latitude", Dbl()), Fld("artist_longitude", Dbl()),
                     Fld("artist_location", Str()), Fld("artist_name", Str()), Fld("song_id", Str()),
-                    Fld("title", Str()), Fld("duration", Dbl()), Fld("year", Int())]),
-        mode
-    )
+                    Fld("title", Str()), Fld("duration", Dbl()), Fld("year", Int())]))
 
     print(f"{songs_data_staging.count()} song staging records loaded")
 
@@ -69,7 +67,7 @@ def process_song_data(spark: SparkSession, mode: str) -> (DataFrame, DataFrame):
 
     # write songs table to parquet files partitioned by year and artist
     songs_table.write.partitionBy("year", "artist_id").mode(config.get(mode, "WRITE_MODE")) \
-        .parquet("s3a://wallerstein-udacity/data_lake/songs_table")
+        .parquet(output_path + "/songs_table")
 
     # extract columns to create artists table
     artists_table = songs_data_staging.select("artist_id", "artist_name", "artist_location", "artist_latitude",
@@ -79,34 +77,38 @@ def process_song_data(spark: SparkSession, mode: str) -> (DataFrame, DataFrame):
 
     # write artists table to parquet files
     artists_table.write.mode(config.get(mode, "WRITE_MODE")) \
-        .parquet("s3a://wallerstein-udacity/data_lake/artists_table")
+        .parquet(output_path + "/artists_table")
 
     return songs_table, artists_table
 
 
-def process_log_data(spark: SparkSession, songs_table: DataFrame, mode: str) -> (DataFrame, DataFrame, DataFrame):
+def process_log_data(spark: SparkSession, songs_table: DataFrame, input_path: str, output_path: str,
+                     mode: str) -> (DataFrame, DataFrame, DataFrame):
     """
     Load log file from s3 into staging table then populate users, time and song_play tables
     :param spark: SparkSession object
     :param songs_table: DataFrame containing songs records
+    :param input_path: Base path for input json data files
+    :param output_path: Base path for parquet files
     :param mode: Configuration mode
     :return: Tuple containing users, time and songplays tables
     """
-    log_data_staging = populate_log_staging_table(spark, mode)
-    users_table = populate_user_table(log_data_staging, mode)
-    time_table = populate_time_table(spark, log_data_staging, mode)
-    songplays_table = populate_songplays_table(log_data_staging, songs_table, time_table, mode)
+    log_data_staging = populate_log_staging_table(spark, input_path)
+    users_table = populate_user_table(log_data_staging, output_path, mode)
+    time_table = populate_time_table(spark, log_data_staging, output_path, mode)
+    songplays_table = populate_songplays_table(log_data_staging, songs_table, time_table, output_path, mode)
     return users_table, time_table, songplays_table
 
 
 def populate_songplays_table(log_data_staging: DataFrame, songs_table: DataFrame, time_table: DataFrame,
-                             mode: str) -> DataFrame:
+                             output_path: str, mode: str) -> DataFrame:
     """
     Populate songplays time from join of staging and songs tables
     Persist to s3 partitioned by year and month
     :param log_data_staging: Staging table
     :param songs_table: Songs table
     :param time_table: Time table
+    :param output_path: Base path for parquet files
     :param mode: Configuration mode
     :return: songplays table
     """
@@ -126,17 +128,19 @@ def populate_songplays_table(log_data_staging: DataFrame, songs_table: DataFrame
     ).dropDuplicates()
     print(f"{songplays_table.count()} songplay records populated")
     # write to s3 partitioned by year and month
-    songplays_table.join(time_table, on=["start_time"], how="inner").write.mode(config.get(mode, "WRITE_MODE")) \
-        .partitionBy("year", "month").parquet("s3a://wallerstein-udacity/data_lake/song_plays")
+    df = songplays_table.join(time_table, on=["start_time"], how="inner")
+    df.write.mode(config.get(mode, "WRITE_MODE"))\
+        .partitionBy("year", "month").parquet(output_path + "/song_plays")
     return songplays_table
 
 
-def populate_time_table(spark: SparkSession, log_data_staging: DataFrame, mode: str) -> DataFrame:
+def populate_time_table(spark: SparkSession, log_data_staging: DataFrame, output_path: str, mode: str) -> DataFrame:
     """
     Generate correct time and date fields, populate time table
     Write to s3 and return
     :param spark: SparkSession
     :param log_data_staging: Log staging table
+    :param output_path: Base path for parquet files
     :param mode: Configuration mode
     :return: Populated time table
     """
@@ -158,15 +162,16 @@ def populate_time_table(spark: SparkSession, log_data_staging: DataFrame, mode: 
     print(f"{time_table.count()} time records populated")
     # write to s3
     time_table.write.mode(config.get(mode, "WRITE_MODE")).partitionBy("year", "month") \
-        .parquet("s3a://wallerstein-udacity/data_lake/time_table")
+        .parquet(output_path + "/time_table")
     return time_table
 
 
-def populate_user_table(log_data_staging: DataFrame, mode: str) -> DataFrame:
+def populate_user_table(log_data_staging: DataFrame, output_path: str, mode: str) -> DataFrame:
     """
     Create user table with field names matching the rest of the schema,
     populate from staging and write to s3 in parquet format
     :param log_data_staging: Log staging table
+    :param output_path: Base path for parquet files
     :param mode: Configuration mode
     :return: Populated user table
     """
@@ -178,15 +183,15 @@ def populate_user_table(log_data_staging: DataFrame, mode: str) -> DataFrame:
         log_data_staging.level.alias("level")
     ).dropDuplicates()
     print(f"{users_table.count()} user records populated")
-    users_table.write.mode(config.get(mode, "WRITE_MODE")).parquet("s3a://wallerstein-udacity/data_lake/users_table")
+    users_table.write.mode(config.get(mode, "WRITE_MODE")).parquet(output_path + "/users_table")
     return users_table
 
 
-def populate_log_staging_table(spark: SparkSession, mode: str) -> DataFrame:
+def populate_log_staging_table(spark: SparkSession, input_path: str) -> DataFrame:
     """
     Populate log staging table from s3 and return
     :param spark: SparkSession
-    :param mode: Configuration mode
+    :param input_path: Base path for input
     :return: Populated log staging table
     """
     log_schema = StructType([Fld("artist", Str()),
@@ -207,7 +212,7 @@ def populate_log_staging_table(spark: SparkSession, mode: str) -> DataFrame:
                              Fld("ts", Lng()),
                              Fld("userAgent", Str()),
                              Fld("userId", Str())])
-    log_data_staging = get_json_from_s3(spark, "udacity-dend/log_data/2018/11/*.json", log_schema, mode)\
+    log_data_staging = get_json_from_s3(spark, input_path + "/log_data/2018/11/*.json", log_schema)\
         .filter("page = 'NextSong'")
 
     print(f"{log_data_staging.count()} songplay log records loaded")
@@ -230,8 +235,10 @@ def main() -> None:
     # set Spark logging level
     spark.sparkContext.setLogLevel(config.get(mode, "LOG_LEVEL"))
 
-    songs_table, _ = process_song_data(spark, mode)
-    process_log_data(spark, songs_table, mode)
+    input_data = config.get(mode, "READ_PREFIX") + "udacity-dend/"
+    output_data = "s3a://wallerstein-udacity/data_lake/"
+    songs_table, _ = process_song_data(spark, input_data, output_data, mode)
+    process_log_data(spark, songs_table, input_data, output_data, mode)
 
     print("SUCCESS!")
 
