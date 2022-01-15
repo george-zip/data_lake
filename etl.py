@@ -61,7 +61,8 @@ def process_song_data(spark: SparkSession, input_path: str, output_path: str, mo
     print(f"{songs_data_staging.count()} song staging records loaded")
 
     # extract columns to create songs table
-    songs_table = songs_data_staging.select("song_id", "title", "artist_id", "year", "duration")
+    songs_table = songs_data_staging.select("song_id", "title", "artist_id", "year", "duration")\
+        .dropDuplicates(["song_id"])
 
     print(f"{songs_table.count()} song records populated")
 
@@ -71,7 +72,7 @@ def process_song_data(spark: SparkSession, input_path: str, output_path: str, mo
 
     # extract columns to create artists table
     artists_table = songs_data_staging.select("artist_id", "artist_name", "artist_location", "artist_latitude",
-                                              "artist_longitude")
+                                              "artist_longitude").dropDuplicates(["artist_id"])
 
     print(f"{artists_table.count()} artist records populated")
 
@@ -157,7 +158,7 @@ def populate_time_table(spark: SparkSession, log_data_staging: DataFrame, output
         month(log_data_staging.timestamp).alias("month"),
         year(log_data_staging.timestamp).alias("year"),
         dayofweek(log_data_staging.timestamp).alias("weekday"),
-    ).dropDuplicates()
+    ).dropDuplicates(["start_time"])
     spark.conf.unset("spark.sql.session.timeZone")
     print(f"{time_table.count()} time records populated")
     # write to s3
@@ -181,7 +182,7 @@ def populate_user_table(log_data_staging: DataFrame, output_path: str, mode: str
         log_data_staging.lastName.alias("last_name"),
         log_data_staging.gender.alias("gender"),
         log_data_staging.level.alias("level")
-    ).dropDuplicates()
+    ).dropDuplicates(["user_id"])
     print(f"{users_table.count()} user records populated")
     users_table.write.mode(config.get(mode, "WRITE_MODE")).parquet(output_path + "/users_table")
     return users_table
